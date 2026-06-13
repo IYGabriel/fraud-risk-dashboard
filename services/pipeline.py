@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from services.alert_engine import add_alert_decisions
 from services.data_loader import load_transactions
 from services.feature_engineering import add_features
 from services.risk_engine import apply_risk_rules
@@ -35,6 +36,10 @@ def run_fraud_pipeline(
         featured_transactions
     )
 
+    alerted_transactions = apply_risk_rules(
+        featured_transactions
+    )
+
     if output_path is not None:
         output = Path(output_path)
 
@@ -43,9 +48,9 @@ def run_fraud_pipeline(
             exist_ok=True,
         )
 
-        scored_transactions.to_csv(
+        alerted_transactions.to_csv(
             output,
             index=False,
         )
 
-    return scored_transactions
+    return alerted_transactions

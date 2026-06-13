@@ -15,6 +15,9 @@ def main() -> None:
         "transaction_type",
         "risk_score",
         "risk_level",
+        "decision",
+        "alert_priority",
+        "alert_status",
         "triggered_rules",
     ]
 
