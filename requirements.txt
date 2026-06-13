@@ -1,9 +1,0 @@
-pandas
-numpy
-streamlit
-plotly
-pyyaml
-scikit-learn
-joblib
-pytest
-pydantic
