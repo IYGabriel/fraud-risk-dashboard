@@ -1,0 +1,37 @@
+rules:
+  night_transaction:
+    weight: 10
+    reason: "Transaction occurred during unusual night hours"
+
+  unusual_amount:
+    weight: 25
+    threshold: 3.0
+    reason: "Transaction amount is significantly above the customer's average"
+
+  country_mismatch:
+    weight: 15
+    reason: "Transaction country differs from the customer's usual country"
+
+  high_velocity:
+    weight: 15
+    reason: "Multiple transactions occurred within one hour"
+
+  new_account:
+    weight: 10
+    reason: "Transaction was made from a recently created account"
+
+  high_risk_transaction_type:
+    weight: 15
+    reason: "Transaction type is associated with elevated fraud risk"
+
+  new_device:
+    weight: 5
+    reason: "Transaction was initiated from a new device"
+
+  new_beneficiary:
+    weight: 5
+    reason: "Transaction was sent to a new beneficiary"
+
+risk_thresholds:
+  medium: 30
+  high: 60
