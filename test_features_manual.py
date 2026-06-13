@@ -9,6 +9,11 @@ def main() -> None:
 
     featured = add_features(transactions)
 
+    featured.to_csv(
+        "data/processed/sample_transactions_featured.csv",
+        index=False,
+    )
+
     columns_to_show = [
         "transaction_id",
         "amount",
@@ -23,6 +28,10 @@ def main() -> None:
     ]
 
     print(featured[columns_to_show])
+    print(
+        "\nProcessed dataset saved to: "
+        "data/processed/sample_transactions_featured.csv"
+    )
 
 
 if __name__ == "__main__":
