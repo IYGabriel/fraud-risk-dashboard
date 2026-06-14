@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -14,14 +17,13 @@ st.set_page_config(
 )
 
 
-def load_dashboard_data() -> pd.DataFrame:
+def normalise_columns(
+    transactions: pd.DataFrame,
+) -> pd.DataFrame:
     """
-    Run the fraud pipeline and return the completed dataset.
+    Standardise column names and ensure alert fields exist.
     """
-    transactions = run_fraud_pipeline(
-        input_path="data/raw/sample_transactions.csv",
-        output_path=None,
-    )
+    transactions = transactions.copy()
 
     transactions.columns = (
         transactions.columns
@@ -31,7 +33,6 @@ def load_dashboard_data() -> pd.DataFrame:
         .str.replace(" ", "_")
     )
 
-    # Safety fallback in case the pipeline returns only risk scores.
     if "decision" not in transactions.columns:
         transactions = add_alert_decisions(
             transactions
@@ -40,12 +41,61 @@ def load_dashboard_data() -> pd.DataFrame:
     return transactions
 
 
+def load_dashboard_data() -> pd.DataFrame:
+    """
+    Run the fraud pipeline using the sample dataset.
+    """
+    transactions = run_fraud_pipeline(
+        input_path="data/raw/sample_transactions.csv",
+        output_path=None,
+    )
+
+    return normalise_columns(transactions)
+
+
+def load_uploaded_data(
+    uploaded_file: object,
+) -> pd.DataFrame:
+    """
+    Save an uploaded CSV temporarily and run it
+    through the complete fraud pipeline.
+    """
+    temporary_path: str | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".csv",
+            delete=False,
+        ) as temporary_file:
+            temporary_file.write(
+                uploaded_file.getbuffer()
+            )
+
+            temporary_path = temporary_file.name
+
+        transactions = run_fraud_pipeline(
+            input_path=temporary_path,
+            output_path=None,
+        )
+
+        return normalise_columns(transactions)
+
+    finally:
+        if temporary_path is not None:
+            Path(temporary_path).unlink(
+                missing_ok=True
+            )
+
+
 def format_list(value: object) -> str:
     """
-    Convert lists into readable text for the dashboard.
+    Convert lists into readable dashboard text.
     """
     if isinstance(value, list):
         return ", ".join(value)
+
+    if pd.isna(value):
+        return ""
 
     return str(value)
 
@@ -58,20 +108,48 @@ def main() -> None:
         "and analyst decision support."
     )
 
+    st.sidebar.header("Data Source")
+
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload transaction CSV",
+        type=["csv"],
+        help=(
+            "Upload a CSV using the same columns as "
+            "the sample transaction dataset."
+        ),
+    )
+
     try:
-        transactions = load_dashboard_data()
+        if uploaded_file is not None:
+            transactions = load_uploaded_data(
+                uploaded_file
+            )
+
+            st.sidebar.success(
+                f"Loaded: {uploaded_file.name}"
+            )
+        else:
+            transactions = load_dashboard_data()
+
+            st.sidebar.info(
+                "Using the sample transaction dataset."
+            )
+
     except Exception as error:
         st.error(
-            f"Unable to load transaction data: {error}"
+            f"Unable to process transaction data: {error}"
         )
         st.stop()
 
     required_columns = {
+        "transaction_id",
         "risk_score",
         "risk_level",
         "decision",
         "alert_priority",
         "alert_status",
+        "triggered_rules",
+        "risk_reasons",
     }
 
     missing_columns = (
@@ -84,10 +162,12 @@ def main() -> None:
             "The dashboard is missing required columns: "
             f"{sorted(missing_columns)}"
         )
+
         st.write(
             "Available columns:",
             transactions.columns.tolist(),
         )
+
         st.stop()
 
     total_transactions = len(transactions)
@@ -222,15 +302,34 @@ def main() -> None:
         "triggered_rules",
     ]
 
+    available_display_columns = [
+        column
+        for column in display_columns
+        if column in filtered_transactions.columns
+    ]
+
     st.dataframe(
-        filtered_transactions[display_columns],
-        use_container_width=True,
+        filtered_transactions[
+            available_display_columns
+        ],
+        width="stretch",
         hide_index=True,
     )
 
     st.caption(
         f"Showing {len(filtered_transactions)} of "
         f"{total_transactions} transactions."
+    )
+
+    csv_data = filtered_transactions.to_csv(
+        index=False
+    ).encode("utf-8")
+
+    st.download_button(
+        label="Download Scored Results",
+        data=csv_data,
+        file_name="fraud_scored_transactions.csv",
+        mime="text/csv",
     )
 
     st.divider()
