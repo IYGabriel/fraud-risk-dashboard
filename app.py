@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -33,7 +35,15 @@ def normalise_columns(
         .str.replace(" ", "_")
     )
 
-    if "decision" not in transactions.columns:
+    required_alert_columns = {
+        "decision",
+        "alert_priority",
+        "alert_status",
+    }
+
+    if not required_alert_columns.issubset(
+        set(transactions.columns)
+    ):
         transactions = add_alert_decisions(
             transactions
         )
@@ -50,11 +60,13 @@ def load_dashboard_data() -> pd.DataFrame:
         output_path=None,
     )
 
-    return normalise_columns(transactions)
+    return normalise_columns(
+        transactions
+    )
 
 
 def load_uploaded_data(
-    uploaded_file: object,
+    uploaded_file: Any,
 ) -> pd.DataFrame:
     """
     Save an uploaded CSV temporarily and run it
@@ -78,37 +90,138 @@ def load_uploaded_data(
             output_path=None,
         )
 
-        return normalise_columns(transactions)
+        return normalise_columns(
+            transactions
+        )
 
     finally:
         if temporary_path is not None:
-            Path(temporary_path).unlink(
+            Path(
+                temporary_path
+            ).unlink(
                 missing_ok=True
             )
 
 
-def format_list(value: object) -> str:
+def format_list(
+    value: object,
+) -> str:
     """
     Convert lists into readable dashboard text.
     """
     if isinstance(value, list):
-        return ", ".join(value)
+        return ", ".join(
+            str(item)
+            for item in value
+        )
 
-    if pd.isna(value):
+    if value is None:
         return ""
+
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
 
     return str(value)
 
 
+def parse_rule_list(
+    value: object,
+) -> list[str]:
+    """
+    Convert triggered-rule values into a clean list.
+    """
+    if isinstance(value, list):
+        return [
+            str(item).strip()
+            for item in value
+            if str(item).strip()
+        ]
+
+    if value is None:
+        return []
+
+    try:
+        if pd.isna(value):
+            return []
+    except (TypeError, ValueError):
+        pass
+
+    value_text = str(value).strip()
+
+    if not value_text:
+        return []
+
+    try:
+        parsed_value = ast.literal_eval(
+            value_text
+        )
+
+        if isinstance(parsed_value, list):
+            return [
+                str(item).strip()
+                for item in parsed_value
+                if str(item).strip()
+            ]
+
+    except (ValueError, SyntaxError):
+        pass
+
+    return [
+        item.strip()
+        for item in value_text.split(",")
+        if item.strip()
+    ]
+
+
+def create_rule_counts(
+    transactions: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Count how often each fraud rule was triggered.
+    """
+    rules: list[str] = []
+
+    for value in transactions[
+        "triggered_rules"
+    ]:
+        rules.extend(
+            parse_rule_list(
+                value
+            )
+        )
+
+    if not rules:
+        return pd.DataFrame(
+            columns=[
+                "rule",
+                "count",
+            ]
+        )
+
+    return (
+        pd.Series(rules)
+        .value_counts()
+        .rename_axis("rule")
+        .reset_index(name="count")
+    )
+
+
 def main() -> None:
-    st.title("🛡️ Fraud Risk Dashboard")
+    st.title(
+        "🛡️ Fraud Risk Dashboard"
+    )
 
     st.caption(
         "Rule-based transaction monitoring, fraud scoring "
         "and analyst decision support."
     )
 
-    st.sidebar.header("Data Source")
+    st.sidebar.header(
+        "Data Source"
+    )
 
     uploaded_file = st.sidebar.file_uploader(
         "Upload transaction CSV",
@@ -128,6 +241,7 @@ def main() -> None:
             st.sidebar.success(
                 f"Loaded: {uploaded_file.name}"
             )
+
         else:
             transactions = load_dashboard_data()
 
@@ -143,6 +257,7 @@ def main() -> None:
 
     required_columns = {
         "transaction_id",
+        "amount",
         "risk_score",
         "risk_level",
         "decision",
@@ -170,7 +285,9 @@ def main() -> None:
 
         st.stop()
 
-    total_transactions = len(transactions)
+    total_transactions = len(
+        transactions
+    )
 
     high_risk_transactions = int(
         (
@@ -218,9 +335,14 @@ def main() -> None:
     )
 
     st.divider()
-    st.subheader("Transaction Monitoring Queue")
 
-    filter_1, filter_2, filter_3 = st.columns(3)
+    st.subheader(
+        "Filters"
+    )
+
+    filter_1, filter_2, filter_3 = (
+        st.columns(3)
+    )
 
     with filter_1:
         selected_risk_levels = st.multiselect(
@@ -253,38 +375,226 @@ def main() -> None:
         )
 
     with filter_3:
+        maximum_risk_score = int(
+            transactions[
+                "risk_score"
+            ].max()
+        )
+
         minimum_score = st.slider(
             "Minimum risk score",
             min_value=0,
-            max_value=100,
+            max_value=max(
+                100,
+                maximum_risk_score,
+            ),
             value=0,
             step=5,
         )
 
     filtered_transactions = transactions[
-        transactions["risk_level"].isin(
+        transactions[
+            "risk_level"
+        ].isin(
             selected_risk_levels
         )
-        & transactions["decision"].isin(
+        & transactions[
+            "decision"
+        ].isin(
             selected_decisions
         )
         & (
-            transactions["risk_score"]
+            transactions[
+                "risk_score"
+            ]
             >= minimum_score
         )
     ].copy()
 
-    filtered_transactions[
-        "triggered_rules"
-    ] = filtered_transactions[
-        "triggered_rules"
-    ].apply(format_list)
+    st.divider()
 
-    filtered_transactions[
+    st.subheader(
+        "Fraud Analytics"
+    )
+
+    if filtered_transactions.empty:
+        st.info(
+            "No transactions match the current filters."
+        )
+
+    else:
+        chart_1, chart_2 = (
+            st.columns(2)
+        )
+
+        risk_level_counts = (
+            filtered_transactions[
+                "risk_level"
+            ]
+            .value_counts()
+            .reindex(
+                [
+                    "High",
+                    "Medium",
+                    "Low",
+                ],
+                fill_value=0,
+            )
+            .rename_axis(
+                "risk_level"
+            )
+            .reset_index(
+                name="transactions"
+            )
+        )
+
+        with chart_1:
+            st.write(
+                "#### Risk-Level Distribution"
+            )
+
+            st.bar_chart(
+                risk_level_counts,
+                x="risk_level",
+                y="transactions",
+                width="stretch",
+            )
+
+        decision_counts = (
+            filtered_transactions[
+                "decision"
+            ]
+            .value_counts()
+            .reindex(
+                [
+                    "Block",
+                    "Manual Review",
+                    "Approve",
+                ],
+                fill_value=0,
+            )
+            .rename_axis(
+                "decision"
+            )
+            .reset_index(
+                name="transactions"
+            )
+        )
+
+        with chart_2:
+            st.write(
+                "#### Decision Distribution"
+            )
+
+            st.bar_chart(
+                decision_counts,
+                x="decision",
+                y="transactions",
+                width="stretch",
+            )
+
+        chart_3, chart_4 = (
+            st.columns(2)
+        )
+
+        transaction_value_by_risk = (
+            filtered_transactions
+            .groupby(
+                "risk_level",
+                as_index=False,
+            )["amount"]
+            .sum()
+            .rename(
+                columns={
+                    "amount": "transaction_value",
+                }
+            )
+        )
+
+        risk_order = pd.CategoricalDtype(
+            categories=[
+                "High",
+                "Medium",
+                "Low",
+            ],
+            ordered=True,
+        )
+
+        transaction_value_by_risk[
+            "risk_level"
+        ] = transaction_value_by_risk[
+            "risk_level"
+        ].astype(
+            risk_order
+        )
+
+        transaction_value_by_risk = (
+            transaction_value_by_risk
+            .sort_values(
+                "risk_level"
+            )
+        )
+
+        with chart_3:
+            st.write(
+                "#### Transaction Value by Risk Level"
+            )
+
+            st.bar_chart(
+                transaction_value_by_risk,
+                x="risk_level",
+                y="transaction_value",
+                width="stretch",
+            )
+
+        rule_counts = create_rule_counts(
+            filtered_transactions
+        )
+
+        with chart_4:
+            st.write(
+                "#### Most Frequently Triggered Rules"
+            )
+
+            if rule_counts.empty:
+                st.info(
+                    "No fraud rules were triggered "
+                    "for the selected transactions."
+                )
+
+            else:
+                st.bar_chart(
+                    rule_counts.head(10),
+                    x="rule",
+                    y="count",
+                    width="stretch",
+                )
+
+    st.divider()
+
+    st.subheader(
+        "Transaction Monitoring Queue"
+    )
+
+    display_transactions = (
+        filtered_transactions.copy()
+    )
+
+    display_transactions[
+        "triggered_rules"
+    ] = display_transactions[
+        "triggered_rules"
+    ].apply(
+        format_list
+    )
+
+    display_transactions[
         "risk_reasons"
-    ] = filtered_transactions[
+    ] = display_transactions[
         "risk_reasons"
-    ].apply(format_list)
+    ].apply(
+        format_list
+    )
 
     display_columns = [
         "transaction_id",
@@ -305,11 +615,12 @@ def main() -> None:
     available_display_columns = [
         column
         for column in display_columns
-        if column in filtered_transactions.columns
+        if column
+        in display_transactions.columns
     ]
 
     st.dataframe(
-        filtered_transactions[
+        display_transactions[
             available_display_columns
         ],
         width="stretch",
@@ -321,22 +632,33 @@ def main() -> None:
         f"{total_transactions} transactions."
     )
 
-    csv_data = filtered_transactions.to_csv(
-        index=False
-    ).encode("utf-8")
+    csv_data = (
+        filtered_transactions
+        .to_csv(
+            index=False
+        )
+        .encode(
+            "utf-8"
+        )
+    )
 
     st.download_button(
         label="Download Scored Results",
         data=csv_data,
-        file_name="fraud_scored_transactions.csv",
+        file_name=(
+            "fraud_scored_transactions.csv"
+        ),
         mime="text/csv",
     )
 
     st.divider()
-    st.subheader("Transaction Investigation")
+
+    st.subheader(
+        "Transaction Investigation"
+    )
 
     transaction_options = (
-        filtered_transactions[
+        display_transactions[
             "transaction_id"
         ].tolist()
     )
@@ -353,48 +675,72 @@ def main() -> None:
     )
 
     selected_transaction = (
-        filtered_transactions.loc[
-            filtered_transactions[
+        display_transactions.loc[
+            display_transactions[
                 "transaction_id"
             ]
             == selected_transaction_id
         ].iloc[0]
     )
 
-    detail_1, detail_2, detail_3 = st.columns(3)
+    detail_1, detail_2, detail_3 = (
+        st.columns(3)
+    )
 
     detail_1.metric(
         "Risk Score",
-        int(selected_transaction["risk_score"]),
+        int(
+            selected_transaction[
+                "risk_score"
+            ]
+        ),
     )
 
     detail_2.metric(
         "Risk Level",
-        selected_transaction["risk_level"],
+        selected_transaction[
+            "risk_level"
+        ],
     )
 
     detail_3.metric(
         "Decision",
-        selected_transaction["decision"],
+        selected_transaction[
+            "decision"
+        ],
     )
 
-    st.write("### Triggered Rules")
+    st.write(
+        "### Triggered Rules"
+    )
 
-    if selected_transaction["triggered_rules"]:
+    if selected_transaction[
+        "triggered_rules"
+    ]:
         st.write(
-            selected_transaction["triggered_rules"]
+            selected_transaction[
+                "triggered_rules"
+            ]
         )
+
     else:
         st.write(
             "No fraud rules were triggered."
         )
 
-    st.write("### Risk Explanation")
+    st.write(
+        "### Risk Explanation"
+    )
 
-    if selected_transaction["risk_reasons"]:
+    if selected_transaction[
+        "risk_reasons"
+    ]:
         st.write(
-            selected_transaction["risk_reasons"]
+            selected_transaction[
+                "risk_reasons"
+            ]
         )
+
     else:
         st.write(
             "No elevated fraud-risk indicators detected."
@@ -410,14 +756,19 @@ def main() -> None:
         transaction_details = {
             key: (
                 value.isoformat()
-                if hasattr(value, "isoformat")
+                if hasattr(
+                    value,
+                    "isoformat",
+                )
                 else value
             )
             for key, value
             in transaction_details.items()
         }
 
-        st.json(transaction_details)
+        st.json(
+            transaction_details
+        )
 
 
 if __name__ == "__main__":
