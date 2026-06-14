@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -8,7 +7,12 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from services.alert_engine import add_alert_decisions
+from services.dashboard_utils import (
+    create_rule_counts,
+    find_missing_dashboard_columns,
+    format_list,
+    normalise_columns,
+)
 from services.pipeline import run_fraud_pipeline
 
 
@@ -17,38 +21,6 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide",
 )
-
-
-def normalise_columns(
-    transactions: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Standardise column names and ensure alert fields exist.
-    """
-    transactions = transactions.copy()
-
-    transactions.columns = (
-        transactions.columns
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
-    )
-
-    required_alert_columns = {
-        "decision",
-        "alert_priority",
-        "alert_status",
-    }
-
-    if not required_alert_columns.issubset(
-        set(transactions.columns)
-    ):
-        transactions = add_alert_decisions(
-            transactions
-        )
-
-    return transactions
 
 
 def load_dashboard_data() -> pd.DataFrame:
@@ -103,112 +75,6 @@ def load_uploaded_data(
             )
 
 
-def format_list(
-    value: object,
-) -> str:
-    """
-    Convert lists into readable dashboard text.
-    """
-    if isinstance(value, list):
-        return ", ".join(
-            str(item)
-            for item in value
-        )
-
-    if value is None:
-        return ""
-
-    try:
-        if pd.isna(value):
-            return ""
-    except (TypeError, ValueError):
-        pass
-
-    return str(value)
-
-
-def parse_rule_list(
-    value: object,
-) -> list[str]:
-    """
-    Convert triggered-rule values into a clean list.
-    """
-    if isinstance(value, list):
-        return [
-            str(item).strip()
-            for item in value
-            if str(item).strip()
-        ]
-
-    if value is None:
-        return []
-
-    try:
-        if pd.isna(value):
-            return []
-    except (TypeError, ValueError):
-        pass
-
-    value_text = str(value).strip()
-
-    if not value_text:
-        return []
-
-    try:
-        parsed_value = ast.literal_eval(
-            value_text
-        )
-
-        if isinstance(parsed_value, list):
-            return [
-                str(item).strip()
-                for item in parsed_value
-                if str(item).strip()
-            ]
-
-    except (ValueError, SyntaxError):
-        pass
-
-    return [
-        item.strip()
-        for item in value_text.split(",")
-        if item.strip()
-    ]
-
-
-def create_rule_counts(
-    transactions: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Count how often each fraud rule was triggered.
-    """
-    rules: list[str] = []
-
-    for value in transactions[
-        "triggered_rules"
-    ]:
-        rules.extend(
-            parse_rule_list(
-                value
-            )
-        )
-
-    if not rules:
-        return pd.DataFrame(
-            columns=[
-                "rule",
-                "count",
-            ]
-        )
-
-    return (
-        pd.Series(rules)
-        .value_counts()
-        .rename_axis("rule")
-        .reset_index(name="count")
-    )
-
-
 def main() -> None:
     st.title(
         "🛡️ Fraud Risk Dashboard"
@@ -255,21 +121,10 @@ def main() -> None:
         )
         st.stop()
 
-    required_columns = {
-        "transaction_id",
-        "amount",
-        "risk_score",
-        "risk_level",
-        "decision",
-        "alert_priority",
-        "alert_status",
-        "triggered_rules",
-        "risk_reasons",
-    }
-
     missing_columns = (
-        required_columns
-        - set(transactions.columns)
+        find_missing_dashboard_columns(
+            transactions
+        )
     )
 
     if missing_columns:
