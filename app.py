@@ -24,13 +24,16 @@ st.set_page_config(
 )
 
 
-def load_dashboard_data() -> pd.DataFrame:
+def load_dashboard_data(
+    scoring_mode: str,
+) -> pd.DataFrame:
     """
     Run the fraud pipeline using the sample dataset.
     """
     transactions = run_fraud_pipeline(
         input_path="data/raw/sample_transactions.csv",
         output_path=None,
+        scoring_mode=scoring_mode,
     )
 
     return normalise_columns(
@@ -40,6 +43,7 @@ def load_dashboard_data() -> pd.DataFrame:
 
 def load_uploaded_data(
     uploaded_file: Any,
+    scoring_mode: str,
 ) -> pd.DataFrame:
     """
     Save, validate, and process an uploaded CSV.
@@ -64,6 +68,7 @@ def load_uploaded_data(
         transactions = run_fraud_pipeline(
             input_path=temporary_path,
             output_path=None,
+            scoring_mode=scoring_mode,
         )
 
         return normalise_columns(
@@ -93,6 +98,43 @@ def main() -> None:
         "Data Source"
     )
 
+    scoring_mode_label = st.sidebar.selectbox(
+        "Scoring Mode",
+        options=[
+            "Rules",
+            "Model",
+            "Hybrid",
+        ],
+        index=0,
+        help=(
+            "Rules uses configurable fraud rules. "
+            "Model uses the model-service interface. "
+            "Hybrid combines both scores."
+        ),
+    )
+
+    scoring_mode_map = {
+        "Rules": "rules",
+        "Model": "model",
+        "Hybrid": "hybrid",
+    }
+
+    scoring_mode = scoring_mode_map[
+        scoring_mode_label
+    ]
+
+    if scoring_mode == "model":
+        st.sidebar.warning(
+            "Model mode currently uses a placeholder "
+            "probability based on the rule score."
+        )
+
+    elif scoring_mode == "hybrid":
+        st.sidebar.warning(
+            "Hybrid mode currently combines the rule score "
+            "with a placeholder model probability."
+        )
+
     uploaded_file = st.sidebar.file_uploader(
         "Upload transaction CSV",
         type=["csv"],
@@ -105,7 +147,8 @@ def main() -> None:
     try:
         if uploaded_file is not None:
             transactions = load_uploaded_data(
-                uploaded_file
+                uploaded_file,
+                scoring_mode=scoring_mode,
             )
 
             st.sidebar.success(
@@ -113,7 +156,9 @@ def main() -> None:
             )
 
         else:
-            transactions = load_dashboard_data()
+            transactions = load_dashboard_data(
+                scoring_mode=scoring_mode
+            )
 
             st.sidebar.info(
                 "Using the sample transaction dataset."
@@ -207,6 +252,10 @@ def main() -> None:
     metric_4.metric(
         "Manual Review",
         review_transactions,
+    )
+
+    st.caption(
+        f"Active scoring mode: {scoring_mode_label}"
     )
 
     st.divider()
@@ -481,6 +530,7 @@ def main() -> None:
         "country",
         "risk_score",
         "risk_level",
+        "scoring_mode",
         "decision",
         "alert_priority",
         "alert_status",
@@ -564,10 +614,13 @@ def main() -> None:
 
     detail_1.metric(
         "Risk Score",
-        int(
-            selected_transaction[
-                "risk_score"
-            ]
+        round(
+            float(
+                selected_transaction[
+                    "risk_score"
+                ]
+            ),
+            2,
         ),
     )
 
