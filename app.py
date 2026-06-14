@@ -14,6 +14,7 @@ from services.dashboard_utils import (
     normalise_columns,
 )
 from services.pipeline import run_fraud_pipeline
+from services.upload_validator import validate_uploaded_csv
 
 
 st.set_page_config(
@@ -41,8 +42,7 @@ def load_uploaded_data(
     uploaded_file: Any,
 ) -> pd.DataFrame:
     """
-    Save an uploaded CSV temporarily and run it
-    through the complete fraud pipeline.
+    Save, validate, and process an uploaded CSV.
     """
     temporary_path: str | None = None
 
@@ -56,6 +56,10 @@ def load_uploaded_data(
             )
 
             temporary_path = temporary_file.name
+
+        validate_uploaded_csv(
+            temporary_path
+        )
 
         transactions = run_fraud_pipeline(
             input_path=temporary_path,
@@ -115,10 +119,26 @@ def main() -> None:
                 "Using the sample transaction dataset."
             )
 
-    except Exception as error:
-        st.error(
-            f"Unable to process transaction data: {error}"
+    except ValueError as error:
+        st.sidebar.error(
+            "Upload validation failed."
         )
+
+        st.error(
+            str(error)
+        )
+
+        st.stop()
+
+    except Exception as error:
+        st.sidebar.error(
+            "Unable to process the uploaded file."
+        )
+
+        st.error(
+            f"Unexpected processing error: {error}"
+        )
+
         st.stop()
 
     missing_columns = (
